@@ -1,4 +1,5 @@
 use ansi_term::Colour::{Green, Blue, Red};
+use serde::Deserialize;
 use std::fmt;
 use std::collections::HashSet;
 
@@ -167,7 +168,7 @@ pub struct Interval {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct StationInterval {
-    pub id: i64,
+    pub id: String,
     pub intervals: Vec<Interval>
 }
 
