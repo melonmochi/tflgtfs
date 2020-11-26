@@ -1,18 +1,20 @@
 use ansi_term::Colour::Red;
-use hyper::header::{Accept, qitem};
-use hyper::mime::{Mime, TopLevel, SubLevel};
 use hyper;
+use hyper::header::{qitem, Accept};
+use hyper::mime::{Mime, SubLevel, TopLevel};
+use hyper::net::HttpsConnector;
+use hyper_native_tls::NativeTlsClient;
 use serde_json;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use tfl::line::{Line, TimeTableResponse, Sequence, Stop};
+use tfl::line::{Line, Sequence, Stop, TimeTableResponse};
 
 pub enum DataSource {
     API,
-    Cache
+    Cache,
 }
 
 #[derive(Clone, Default)]
@@ -28,53 +30,63 @@ impl Client {
         let cache_path: &Path = Path::new("./cache");
         let _ = fs::create_dir(cache_path);
 
+        let ssl = NativeTlsClient::new().unwrap();
+        let connector = HttpsConnector::new(ssl);
+
         Client {
-            client : Arc::new(hyper::Client::new()),
-            app_id : String::new(),
-            app_key : String::new(),
-            cache_dir : String::from("./cache"),
+            client: Arc::new(hyper::Client::with_connector(connector)),
+            app_id: String::new(),
+            app_key: String::new(),
+            cache_dir: String::from("./cache"),
         }
     }
 
-    fn get(&self, endpoint : &str) -> String {
+    fn get(&self, endpoint: &str) -> String {
         match self.cache_get(endpoint) {
             Some(body) => body,
-            None => self.remote_get(endpoint)
+            None => self.remote_get(endpoint),
         }
     }
 
-    fn remote_get(&self, endpoint : &str) -> String {
-        let req_uri = format!("https://api.tfl.gov.uk{}?app_id={}&app_key={}", endpoint, self.app_id, self.app_key);
+    fn remote_get(&self, endpoint: &str) -> String {
+        let req_uri = format!(
+            "https://api.tfl.gov.uk{}?app_id={}&app_key={}",
+            endpoint, self.app_id, self.app_key
+        );
         let mut body = String::new();
-        let mut resp = self.client.get(&req_uri)
-            .header(Accept(vec![
-                           qitem(Mime(TopLevel::Application,
-                                      SubLevel::Ext("json".to_owned()), vec![])),
-            ]))
-            .send().unwrap();
+        let mut resp = self
+            .client
+            .get(&req_uri)
+            .header(Accept(vec![qitem(Mime(
+                TopLevel::Application,
+                SubLevel::Ext("json".to_owned()),
+                vec![],
+            ))]))
+            .send()
+            .unwrap();
         resp.read_to_string(&mut body).unwrap();
         self.cache_put(endpoint, body)
     }
 
-    fn cache_fname(&self, endpoint : &str) -> String {
+    fn cache_fname(&self, endpoint: &str) -> String {
         let fname = String::from(endpoint);
         let fname0 = fname.replace("/", "_");
         self.cache_dir.clone() + "/" + &fname0
     }
 
-    fn cache_put(&self, endpoint : &str, body : String) -> String {
+    fn cache_put(&self, endpoint: &str, body: String) -> String {
         let mut f = fs::File::create(self.cache_fname(endpoint)).unwrap();
         f.write_all(body.as_bytes()).unwrap();
         body
     }
 
-    fn cache_get(&self, endpoint : &str) -> Option<String> {
+    fn cache_get(&self, endpoint: &str) -> Option<String> {
         let mut body = String::new();
         match fs::File::open(self.cache_fname(endpoint)) {
             Ok(ref mut f) => {
                 f.read_to_string(&mut body).unwrap();
                 Some(body)
-            },
+            }
             Err(_) => None,
         }
     }
@@ -83,7 +95,7 @@ impl Client {
         let body = self.cache_get("/line/route");
         match body {
             Some(x) => serde_json::from_str(&x).unwrap(),
-            None => vec![]
+            None => vec![],
         }
     }
 
@@ -92,19 +104,27 @@ impl Client {
         serde_json::from_str(&body).unwrap()
     }
 
-    pub fn get_timetable(&self, line_id : &str, originator: &str, destination : &str) -> Option<TimeTableResponse> {
-        let req_uri = format!("/line/{}/timetable/{}/to/{}", line_id, originator, destination);
+    pub fn get_timetable(
+        &self,
+        line_id: &str,
+        originator: &str,
+        destination: &str,
+    ) -> Option<TimeTableResponse> {
+        let req_uri = format!(
+            "/line/{}/timetable/{}/to/{}",
+            line_id, originator, destination
+        );
         let body = self.get(&req_uri);
         match serde_json::from_str::<TimeTableResponse>(&body) {
-            Ok(ttresp) =>  Some(ttresp.clone()),
+            Ok(ttresp) => Some(ttresp.clone()),
             Err(err) => {
                 println!("{}: {}", Red.bold().paint("Error decoding timetable"), err);
                 None
-            },
+            }
         }
     }
 
-    pub fn get_stops(&self, line_id : &str) -> Vec<Stop> {
+    pub fn get_stops(&self, line_id: &str) -> Vec<Stop> {
         let req_uri = format!("/line/{}/stoppoints", line_id);
         let body = self.get(&req_uri);
         match serde_json::from_str::<Vec<Stop>>(&body) {
@@ -116,7 +136,7 @@ impl Client {
         }
     }
 
-    pub fn get_sequence(&self, line_id : &str, direction : &str) -> Option<Sequence> {
+    pub fn get_sequence(&self, line_id: &str, direction: &str) -> Option<Sequence> {
         let req_uri = format!("/line/{}/route/sequence/{}", line_id, direction);
         let body = self.get(&req_uri);
         match serde_json::from_str::<Sequence>(&body) {

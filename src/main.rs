@@ -1,22 +1,86 @@
-#![cfg_attr(feature = "serde_macros", feature(custom_derive, plugin))]
-#![cfg_attr(feature = "serde_macros", plugin(serde_macros))]
-
-#![cfg_attr(feature="clippy", feature(plugin))]
-#![cfg_attr(feature="clippy", plugin(clippy))]
-
-#[macro_use] extern crate clap;
+#[macro_use]
+extern crate clap;
 extern crate ansi_term;
 extern crate crypto;
 extern crate csv;
-extern crate env_logger;
 extern crate hyper;
+extern crate hyper_native_tls;
+extern crate log;
 extern crate rand;
 extern crate scoped_threadpool;
 extern crate serde;
 extern crate serde_json;
 
-#[cfg(feature = "serde_macros")]
-include!("main.rs.in");
+mod cmd;
+mod format;
+mod geometry;
+mod gtfs;
+mod tfl;
 
-#[cfg(not(feature = "serde_macros"))]
-include!(concat!(env!("OUT_DIR"), "/main.rs"));
+use clap::{App, Arg, SubCommand};
+use format::OutputFormat;
+
+fn arg_format<'a, 'b>() -> Arg<'a, 'b> {
+  Arg::with_name("format")
+    .help("Output format")
+    .possible_values(&["gtfs"])
+    .long("format")
+    .value_name("format")
+}
+
+fn main() {
+  env_logger::init().unwrap();
+
+  let matches = App::new("tfl")
+    .version(env!("CARGO_PKG_VERSION"))
+    .about("Tfl consumer")
+    .subcommand(
+      SubCommand::with_name("fetch-lines")
+        .about("Fetch lines from Tfl")
+        .arg(arg_format())
+        .arg(
+          Arg::with_name("threads")
+            .help("Number of threads. Defaults to 5")
+            .long("threads")
+            .value_name("number"),
+        )
+        .arg(
+          Arg::with_name("sample")
+            .help("Take a sample of the given size")
+            .long("sample")
+            .value_name("size"),
+        ),
+    )
+    .subcommand(
+      SubCommand::with_name("transform")
+        .about("Transform cached data to the given format")
+        .arg(arg_format().index(1).required(true))
+        .arg(
+          Arg::with_name("threads")
+            .help("Number of threads. Defaults to 5")
+            .long("threads")
+            .value_name("number"),
+        )
+        .arg(
+          Arg::with_name("sample")
+            .help("Take a sample of the given size")
+            .long("sample")
+            .value_name("size"),
+        ),
+    )
+    .get_matches();
+
+  if let Some(ref matches) = matches.subcommand_matches("fetch-lines") {
+    let format = value_t!(matches, "format", OutputFormat).unwrap_or(OutputFormat::None);
+    let thread_number = value_t!(matches, "threads", u32).unwrap_or(5);
+    let sample_size = value_t!(matches, "sample", usize).ok();
+    cmd::fetch_lines(format, thread_number, sample_size);
+  }
+
+  if let Some(ref matches) = matches.subcommand_matches("transform") {
+    let format = value_t!(matches, "format", OutputFormat).unwrap_or_else(|e| e.exit());
+    let thread_number = value_t!(matches, "threads", u32).unwrap_or(5);
+    let sample_size = value_t!(matches, "sample", usize).ok();
+    cmd::transform(format, thread_number, sample_size);
+  }
+}
